@@ -59,6 +59,20 @@ fr "$TOOLS/installroot.sh" "$ROOT" "$DEB"
 cp "$SO" "$W/statoverride"
 fr python3 "$TOOLS/mkhfs.py" "$ROOT" "$W/root.hfs" > /dev/null
 check() { python3 "$TOOLS/checkmodes.py" "$@" "$W/root.hfs" "$DEB"; }
+fsck_same() {
+    cp --sparse=always "$1" "$W/fsck.hfs"
+    fsck.hfsplus -f -y "$W/fsck.hfs" > "$W/fsck.log" 2>&1 || { cat "$W/fsck.log"; return 1; }
+    cat "$W/fsck.log"
+    cmp "$1" "$W/fsck.hfs"
+}
+volume_ok() {
+    if command -v fsck.hfsplus > /dev/null; then
+        expect 0 "fsck-$1" 'appears to be OK' fsck_same "$W/root.hfs"
+    else
+        echo "SKIP fsck-$1: no fsck.hfsplus"
+    fi
+}
+volume_ok first
 
 expect 0 recorded '^daemon wheel 755 /private/var/at/spool$' cat "$SO"
 expect 0 recorded-group '^daemon daemon 755 /private/var/msgs$' cat "$SO"
@@ -106,6 +120,7 @@ mv "$W/passwd" "$ROOT/private/etc/passwd"
 fr "$TOOLS/installroot.sh" "$ROOT" "$DEB"
 cp "$SO" "$W/statoverride"
 fr python3 "$TOOLS/mkhfs.py" "$ROOT" "$W/root.hfs" > /dev/null
+volume_ok link
 expect 0 link-installed '^777 1:1$' fr stat -c '%a %u:%g' "$ROOT/private/var/msgs/bounds"
 expect 0 link-override '11 entries match' check -r "$ROOT"
 sed 's|^.* /private/var/msgs/bounds$|#2 #1 750 /private/var/msgs/bounds|' "$W/statoverride" > "$SO"
@@ -114,7 +129,17 @@ expect 1 link-owner '^/private/var/msgs/bounds: volume lrwxrwxrwx 120777 1:1, st
 cp "$W/statoverride" "$SO"
 fr chown 2 "$ROOT/private/var/at/spool" "$ROOT/private/etc/passwd"
 fr python3 "$TOOLS/mkhfs.py" "$ROOT" "$W/root.hfs" > /dev/null
+volume_ok owner
 expect 1 volume-owner '2 differences' check -r "$ROOT"
 expect 1 volume-owner-at '^/private/var/at/spool: volume drwxr-xr-x 040755 2:0, statoverride drwxr-xr-x 040755 1:0$' check -r "$ROOT"
 expect 1 volume-owner-etc '^/private/etc/passwd: volume -rw-r--r-- 100644 2:0, at-test -rw-r--r-- 100644 0:0$' check -r "$ROOT"
+
+fr chown 1 "$ROOT/private/var/at/spool"
+fr chown 0 "$ROOT/private/etc/passwd"
+echo text > "$ROOT/private/var/at/a:b"
+fr python3 "$TOOLS/mkhfs.py" -J "$ROOT" "$W/root.hfs" > /dev/null
+volume_ok journaled
+expect 0 journaled-tree 'volume holds the [0-9]* entries' check -r "$ROOT" -t
+echo other > "$ROOT/private/var/at/a:b"
+expect 1 tree-data '^/private/var/at/a:b: the volume.s data differs$' check -r "$ROOT" -t
 exit "$FAILED"

@@ -41,8 +41,11 @@ The root tree is made in one fakeroot session. The volume keeps each
 file's mode, owner and group from its deb. `tools/checkmodes.py` checks
 this for every entry of every deb, and the build fails on a difference.
 A path that a maintainer script gave to `dpkg-statoverride` must have the
-override's mode, owner and group instead. `tests/checkmodes.sh` tests
-the check.
+override's mode, owner and group instead. It also checks that the volume
+holds exactly the root tree's files, data and links. Then fsck.hfsplus
+checks the volume on a copy, and the build fails if it changes anything.
+`tests/checkmodes.sh` tests these checks. It runs fsck.hfsplus on its own
+volumes when hfsprogs is installed.
 
 The repository's InRelease must be signed by a key in
 `keys/blueberry-pie-os-archive-keyring.gpg`.

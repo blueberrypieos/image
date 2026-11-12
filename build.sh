@@ -95,7 +95,7 @@ done
 fr python3 "$HERE/tools/mkhfs.py" -n "Blueberry Pie OS" -s 1790 -J --seed "$NAME" \
 	-u "$W/root.uuid" "$W/root" "$W/root.hfs"
 python3 "$HERE/tools/checkmodes.py" -r "$W/root" -t "$W/root.hfs" "$W"/debs/*.deb
-cp "$W/root.hfs" "$W/fsck.hfs"
+cp --sparse=always "$W/root.hfs" "$W/fsck.hfs"
 fsck.hfsplus -f -y "$W/fsck.hfs" > "$W/fsck.log" 2>&1 &&
 	cmp -s "$W/root.hfs" "$W/fsck.hfs" ||
 	{ cat "$W/fsck.log" >&2; echo "build.sh: fsck.hfsplus finds the volume damaged" >&2; exit 1; }
