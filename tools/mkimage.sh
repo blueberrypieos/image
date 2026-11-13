@@ -10,8 +10,8 @@
 # BOOTDIR holds the boot partition's files. The packages install them in
 # /usr/lib/blueberry-pie-os/boot. BOOT-ARGS go into cmdline.txt. -s is the
 # boot partition's size in MB, 256 by default. The image size is rounded
-# up to a power of two. With SOURCE_DATE_EPOCH set, the boot partition's
-# files carry that date.
+# up to a power of two. The boot partition's files go in sorted by name.
+# With SOURCE_DATE_EPOCH set, they carry that date.
 # Needs dosfstools, mtools and sfdisk from fdisk.
 set -euo pipefail
 
@@ -35,7 +35,7 @@ done
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp -R "$BOOT"/. "$STAGE"/
+cp -RL "$BOOT"/. "$STAGE"/
 printf '%s\n' "$ARGS" > "$STAGE/cmdline.txt"
 chmod -R u+rwX,go+rX,go-w "$STAGE"
 if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
@@ -62,5 +62,19 @@ mkfs.vfat -F 32 -s "$SPC" -n PIEBOOT --invariant --offset 2048 "$OUT" $(( PART_S
 dd if="$ROOT" of="$OUT" bs=512 seek="$ROOT_START" conv=notrunc status=none
 
 export MTOOLS_SKIP_CHECK=1
-mcopy -s -m -i "$OUT@@1M" "$STAGE"/* ::
+SKEL="$(mktemp -d)"
+trap 'rm -rf "$STAGE" "$SKEL"' EXIT
+n=0
+(cd "$STAGE" && find . -mindepth 1 -print0) | LC_ALL=C sort -z | while IFS= read -r -d '' p; do
+	p="${p#./}"
+	name="${p##*/}"
+	if [ -d "$STAGE/$p" ]; then
+		n=$(( n + 1 ))
+		mkdir -p "$SKEL/$n/$name"
+		touch -r "$STAGE/$p" "$SKEL/$n/$name"
+		mcopy -s -m -i "$OUT@@1M" "$SKEL/$n/$name" "::/${p%"$name"}"
+	else
+		mcopy -m -i "$OUT@@1M" "$STAGE/$p" "::/$p"
+	fi
+done
 echo "image: $OUT"
