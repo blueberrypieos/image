@@ -1,0 +1,62 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 The Blueberry Pie OS Authors
+# Usage: blueberry-pie-os-update-boot, in the system kept in /pie-b, in
+# place of the one that dpkg-divert moved aside.
+# Puts a new kernel bundle into the boot partition's trial/, which this
+# system boots from, and keeps the one before as trial/xnu.bundle.old. A
+# bad bundle still falls back to A, as pieboot arms the watchdog before it
+# reads the bundle. A new pieboot.bin, device tree or overlay could stop
+# the way back to A, so it only goes in as FILE.pending, to be put in place
+# by hand. It never writes the boot partition's own files, which are A's,
+# nor config.txt, usercfg.txt, cmdline.txt or the firmware. Like the
+# update-boot it replaces, it checks and repairs the boot partition with
+# fsck_msdos before it mounts it.
+set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+SRC=/usr/lib/blueberry-pie-os/boot
+me=blueberry-pie-os-update-boot
+if [ ! -f /etc/pie-b-id ] || [ -e /pie-b ]; then
+	echo "$me: not the system kept in /pie-b; boot files not updated" >&2
+	exit 1
+fi
+root=$(df / | awk 'NR == 2 { print $1 }')
+boot="${root%s*}s1"
+case "$boot" in /dev/disk*s1) ;; *) echo "$me: no boot partition for $root" >&2; exit 1 ;; esac
+mnt=$(mount | awk -v dev="$boot" '$1 == dev { print $3; exit }')
+if [ -z "$mnt" ]; then
+	fsck_msdos -p "$boot" || fsck_msdos -y "$boot"
+	mnt=$(mktemp -d /tmp/pie-boot.XXXXXX)
+	trap 'umount "$mnt" && rmdir "$mnt"' EXIT
+	mount_msdos "$boot" "$mnt"
+fi
+t="$mnt/trial"
+if [ ! -f "$t/cmdline.txt" ] || ! grep -qx 'os_prefix=trial/' "$mnt/config.txt"; then
+	echo "$me: the boot partition does not boot trial/; boot files not updated" >&2
+	exit 1
+fi
+cd "$SRC"
+find . -type f | sed 's|^\./||' | while read -r f; do
+	case "$f" in
+	config.txt | usercfg.txt | cmdline.txt | start*.elf | fixup*.dat | bootcode.bin | LICENCE*) continue ;;
+	esac
+	if [ -f "$t/$f" ] && cmp -s "$f" "$t/$f"; then
+		rm -f "$t/$f.pending"
+		continue
+	fi
+	mkdir -p "$t/$(dirname "$f")"
+	if [ "$f" = xnu.bundle ]; then
+		cp "$f" "$t/$f.new"
+		if [ -f "$t/$f" ]; then
+			cp "$t/$f" "$t/$f.old"
+		fi
+		mv -f "$t/$f.new" "$t/$f"
+		echo "$me: trial/$f"
+	elif [ -f "$t/$f.pending" ] && cmp -s "$f" "$t/$f.pending"; then
+		continue
+	else
+		cp "$f" "$t/$f.pending"
+		echo "$me: trial/$f.pending: put it in place by hand, from A, after a go"
+	fi
+done
+sync

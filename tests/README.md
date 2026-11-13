@@ -177,3 +177,8 @@ what was typed before.
 QEMU cannot cover bcm2712, the Pi firmware's own boot path, or real I2C
 and SPI traffic. A hardware reboot covers the firmware boot path. These
 scripts do not generate I2C or SPI traffic.
+
+## Real Pis
+
+`tests/pi` boots a system under test on a real Pi with a way back to the
+system that works. `docs/trial-boot.md` explains it step by step.

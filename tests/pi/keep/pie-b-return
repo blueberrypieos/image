@@ -1,0 +1,94 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 The Blueberry Pie OS Authors
+# Usage: pie-b-return, started at the end of A's /etc/rc.
+# Waits 5 minutes, and then as long as anyone is logged in, by ssh or on a
+# terminal, apt or dpkg runs, or a tests/pi script holds the boot
+# partition. It takes the boot partition's lock itself, and checks all of
+# that again just before it reboots. If the boot partition's config.txt
+# still boots the system in /pie-b, with exactly one launchdsuffix=pieb,
+# pieboot.fallback=1 and pie_watchdog_boot of 60 to 86400 s, it reboots
+# into it. It does
+# not if /var/db/pie-b-stay exists, or after three returns in a row with
+# no health report from B. A health report is the file
+# /pie-b/private/var/db/pie-b-healthy, which this deletes once it has
+# counted it. If it cannot record a return, it stays in A.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+trap '' HUP
+stay=/var/db/pie-b-stay
+count=/var/db/pie-b-returns
+health=/pie-b/private/var/db/pie-b-healthy
+lock=/tmp/pie-pitest-fat.lock
+mnt=
+locked=
+cleanup() {
+	if [ -n "$mnt" ]; then
+		umount "$mnt" 2> /dev/null
+		rmdir "$mnt" 2> /dev/null
+	fi
+	if [ -n "$locked" ]; then rmdir "$lock" 2> /dev/null; fi
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
+say() { echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') pie-b-return: $*"; }
+stay_in_a() { say "$*; staying in A"; exit 0; }
+in_use() {
+	[ -n "$(who 2> /dev/null)" ] && return 0
+	ps ax -o command= 2> /dev/null | grep -Eq '^sshd(-session)?: [^[:space:]@]+@' && return 0
+	pgrep -x dpkg > /dev/null || pgrep -x apt > /dev/null || pgrep -x apt-get > /dev/null
+}
+cmdline_ok() {
+	n_s=0 n_f=0 n_d=0
+	for w in $(cat "$1"); do
+		case "$w" in
+		launchdsuffix | pieboot.fallback | pie_watchdog_boot) return 1 ;;
+		launchdsuffix=*) n_s=$((n_s + 1)); [ "$w" = launchdsuffix=pieb ] || return 1 ;;
+		pieboot.fallback=*) n_f=$((n_f + 1)); [ "$w" = pieboot.fallback=1 ] || return 1 ;;
+		pie_watchdog_boot=*)
+			n_d=$((n_d + 1)); d=${w#*=}
+			case "$d" in "" | *[!0-9]* | 0*) return 1 ;; esac
+			[ "${#d}" -le 5 ] && [ "$d" -ge 60 ] && [ "$d" -le 86400 ] || return 1 ;;
+		esac
+	done
+	[ "$n_s" = 1 ] && [ "$n_f" = 1 ] && [ "$n_d" = 1 ]
+}
+sleep 300
+while :; do
+	[ ! -e "$stay" ] || stay_in_a "$stay exists"
+	if ! in_use && mkdir "$lock" 2> /dev/null; then
+		locked=1
+		if ! in_use; then break; fi
+		rmdir "$lock"
+		locked=
+	fi
+	sleep 60
+done
+[ -x /usr/appleinternal/sbin/launchd.pieb ] && [ -f /pie-b/private/etc/pie-b-id ] || stay_in_a "no system in /pie-b"
+root=$(df / | awk 'NR == 2 { print $1 }')
+boot="${root%s*}s1"
+mnt=$(mktemp -d /tmp/pie-b-return.XXXXXX) || stay_in_a "no mount point"
+mount_msdos -o rdonly "$boot" "$mnt" 2> /dev/null || { rmdir "$mnt"; mnt=; stay_in_a "cannot read $boot"; }
+trial=
+if grep -qx 'os_prefix=trial/' "$mnt/config.txt" && cmdline_ok "$mnt/trial/cmdline.txt"; then
+	trial=1
+fi
+umount "$mnt" || stay_in_a "cannot unmount $mnt"
+rmdir "$mnt"
+mnt=
+[ -n "$trial" ] || stay_in_a "the boot partition does not boot the system in /pie-b with its way back"
+if [ -e "$health" ]; then
+	rm -f "$health" && [ ! -e "$health" ] || stay_in_a "cannot take B's health report"
+	n=0
+elif [ -e "$count" ]; then
+	n=$(cat "$count") || stay_in_a "cannot read $count"
+	case "$n" in [0-9] | [0-9][0-9]) ;; *) stay_in_a "$count holds '$n'" ;; esac
+else
+	n=0
+fi
+[ "$n" -lt 3 ] || stay_in_a "3 returns in a row without a health report from B"
+mkdir -p /var/db && echo $((n + 1)) > "$count.new" && mv "$count.new" "$count" && sync &&
+	[ "$(cat "$count")" = $((n + 1)) ] || stay_in_a "cannot record the return in $count"
+[ ! -e "$stay" ] || stay_in_a "$stay exists"
+! in_use || stay_in_a "A came into use"
+say "return $((n + 1)) of 3 since B's last health report; rebooting into the system in /pie-b"
+reboot

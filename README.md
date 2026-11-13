@@ -72,3 +72,9 @@ A tag builds the image, attests it and releases:
 - `SHA256SUMS`.
 
 Write the image to an SD card with any image writer.
+
+## A fallback for panics and failed boots
+
+`docs/trial-boot.md` explains how to set up a fallback on a Pi: a second
+system boots, and if it fails to boot, hangs or panics, the Pi falls back
+to the system that works. The scripts are in `tests/pi`.

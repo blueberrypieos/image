@@ -1,0 +1,53 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 The Blueberry Pie OS Authors
+# Usage: pie-b-watch, started at the end of /etc/rc in the system kept in
+# /pie-b.
+# Starts deadman at once, with the heartbeat file /var/run/pie-b-heartbeat:
+# its check-in ends the boot deadline. Every 30 s it touches the heartbeat
+# file if sshd answers on en0's address and the default gateway answers,
+# by ping or by a complete ARP entry. If they do not answer for 4 minutes,
+# from boot or later, deadman stops checking in and the kernel panics a
+# minute later, so the board resets into A. While the hardware watchdog is
+# armed and deadman's check-ins keep renewing, each healthy round also
+# touches /var/db/pie-b-healthy, which A reads. /etc/pie-b-qemu stands in
+# for the armed watchdog under QEMU, which never arms it.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+trap '' HUP
+hb=/var/run/pie-b-heartbeat
+ok=/var/db/pie-b-healthy
+healthy() {
+	ip=$(ifconfig en0 2> /dev/null | awk '$1 == "inet" { print $2; exit }')
+	[ -n "$ip" ] || return 1
+	ssh-keyscan -T 5 "$ip" > /dev/null 2>&1 || return 1
+	gw=$(route -n get default 2> /dev/null | awk '/gateway:/ { print $2 }')
+	[ -n "$gw" ] || return 1
+	ping -c 1 -t 5 "$gw" > /dev/null 2>&1 && return 0
+	arp -n "$gw" 2> /dev/null | grep -q ' at [0-9a-f]'
+}
+ours() {
+	kill -0 "$dm" 2> /dev/null || return 1
+	[ "$(sysctl -n hw.watchdog.enabled)" = 1 ] || [ -e /etc/pie-b-qemu ] || return 1
+	[ "$(sysctl -n hw.watchdog.user_pid)" = "$dm" ] && [ "$(sysctl -n hw.watchdog.user_timeout)" -gt 0 ] || return 1
+	r1=$(sysctl -n hw.watchdog.user_remaining) || return 1
+	sleep 6
+	r2=$(sysctl -n hw.watchdog.user_remaining) || return 1
+	case "$r1$r2" in "" | *[!0-9]*) return 1 ;; esac
+	[ "$r1" -gt 0 ] && [ "$r2" -gt 0 ] && [ "$r2" -gt $((r1 - 3000)) ]
+}
+touch "$hb"
+/usr/local/libexec/deadman 60 240 "$hb" &
+dm=$!
+echo "pie-b-watch: deadman $dm started"
+said=
+while :; do
+	if healthy; then
+		touch "$hb"
+		if ours; then
+			touch "$ok"
+			[ -n "$said" ] || echo "pie-b-watch: healthy; deadman $dm checks in"
+			said=1
+		fi
+	fi
+	sleep 30
+done
