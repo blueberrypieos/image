@@ -17,6 +17,19 @@ from the packages in the apt repository at https://blueberrypieos.com/apt/.
   `/var/db/dslocal`. `build.sh` writes pie's record there.
   `dscl` reads them, and root adds users with it.
 
+## Kernel messages
+
+The kernel keeps its messages in a buffer in memory. `sudo dmesg` shows
+them. They don't go to syslogd, so `/var/log/system.log` has none: the
+kernel opens `/dev/klog` only when the boot argument
+`atm_diagnostic_config` has the bit 0x20000000, and the image doesn't set
+it.
+
+To log kernel messages to `/var/log/system.log`, add
+`atm_diagnostic_config=0x20000000` to the line in `cmdline.txt` on the
+`PIEBOOT` partition, then reboot. Package updates don't change
+`cmdline.txt`.
+
 ## Contents
 
 The root has every package that is Essential or has Priority required,
