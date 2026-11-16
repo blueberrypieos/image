@@ -25,11 +25,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            dpkg fakeroot mtools dosfstools fdisk hfsprogs sqv xz-utils python3
+            dpkg fakeroot mtools dosfstools fdisk hfsprogs sqv xz-utils python3 zfsutils-linux
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: pie-makefs
+        run: |
+          sudo install -m 644 keys/blueberry-pie-os-archive-keyring.gpg /usr/share/keyrings/
+          echo 'deb [signed-by=/usr/share/keyrings/blueberry-pie-os-archive-keyring.gpg] https://blueberrypieos.com/apt/ resolute main' |
+            sudo tee /etc/apt/sources.list.d/pie.list > /dev/null
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pie-makefs
 
       - name: Image
         env:
