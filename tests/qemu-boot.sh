@@ -19,6 +19,10 @@ case "$IMAGE" in
     *.xz) xz -dc -- "$IMAGE" > "$OUT/sd.img" ;;
     *) cp --sparse=always -- "$IMAGE" "$OUT/sd.img" ;;
 esac
+size=$(stat -c %s "$OUT/sd.img")
+card=1048576
+while ((card < size)); do card=$((card * 2)); done
+truncate -s "$card" "$OUT/sd.img"
 OFFSET=$(python3 - "$OUT/sd.img" <<'PY'
 import struct
 import sys

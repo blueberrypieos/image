@@ -146,9 +146,9 @@ tests/pi/backup.sh root@PI known_hosts out/backup
 ```
 
 `inventory.sh` changes nothing. `backup.sh` copies the boot partition's
-files and their sums, the first MB of the disk, `/etc` and the dpkg
-state. Keep the backup off the Pi. `trial.sh` checks the boot partition
-against it before every change.
+files and their sums, the first 16 MiB of the disk, `/etc` and the
+dpkg state. Keep the backup off the Pi. `trial.sh` checks the boot
+partition against it before every change.
 
 ### 2. Prove the way back on each new board
 
@@ -282,7 +282,7 @@ old, and that the check-ins keep renewing. cleanup only removes an ann
 that the users area made.
 
 storage runs `fsck_hfs -l`, which holds A's volume still while it reads
-it. On a large card that can take minutes. If the heartbeat cannot
+it. On a full volume that can take minutes. If the heartbeat cannot
 touch its file for 2 minutes, deadman stops and the board resets into
 A. That is safe, but the area then has to run again.
 

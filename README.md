@@ -1,17 +1,23 @@
 # image
 
-The Blueberry Pie OS SD card images for the Raspberry Pi 4 and 5, built
-from the packages in the apt repository at https://blueberrypieos.com/apt/.
-There are two, with the same packages: one with an HFS+ root, one with a
-ZFS root.
+The Blueberry Pie OS SD card images, built from the packages in the apt
+repository at https://blueberrypieos.com/apt/. There are two, with the
+same base packages: one with an HFS+ root, one with a ZFS root. Both
+boot the Raspberry Pi 4 and 5. The `-hfs` image is for the Raspberry Pi
+only. Boards added later boot the `-zfs` image.
 
 ## The images
 
-- MBR disk images, compressed with xz: 2 GiB for `-hfs`, 4 GiB for `-zfs`.
-- Partition 1: FAT32, 256 MiB, labelled `PIEBOOT`. It holds the
-  firmware, pieboot, `config.txt`, the kernel bundle and `cmdline.txt`.
+- MBR disk images of 3600 MiB, compressed with xz.
+- The first 16 MiB hold the MBR, then zeros up to partition 1. They
+  leave room for the loader of a board whose boot ROM reads it from
+  sector 64, such as the RK3566. `tools/mkimage.sh -l` writes it there.
+- Partition 1: FAT32, 512 MiB, labelled `PIEBOOT`, from sector 32768. It
+  holds the firmware, pieboot, `config.txt`, the kernel bundle and
+  `cmdline.txt`.
 - Partition 2 of `-hfs`: HFS+, case-sensitive and journaled, named
-  "Blueberry Pie OS". It holds the root file system.
+  "Blueberry Pie OS", of 3 GiB. It holds the root file system and does
+  not grow.
 - Partition 2 of `-zfs`: the ZFS pool `pie`, of 3 GiB. The ZFS image needs
   2 GB of memory or more.
 - The user `pie` is in `admin`, so it may use `sudo`. Its password is
@@ -107,6 +113,10 @@ set's tree is those paths of a whole install. The merged tree goes through
 the same checks on an HFS+ volume made for that, before pie-makefs writes
 the pool. zdb then checks the pool.
 
+`tests/mkimage.sh` tests the disk layout that `tools/mkimage.sh` writes:
+where the partitions start, the zeros before partition 1, and a loader
+written with `-l`.
+
 The repository's InRelease must be signed by a key in
 `keys/blueberry-pie-os-archive-keyring.gpg`.
 
@@ -114,11 +124,12 @@ The repository's InRelease must be signed by a key in
 
 A tag builds the images, attests them and releases:
 
-- `blueberry-pie-os-rpi-VERSION-hfs.img.xz` and its `.manifest`;
-- `blueberry-pie-os-rpi-VERSION-zfs.img.xz` and its `.manifest`;
+- `blueberry-pie-os-arm64-VERSION-hfs.img.xz` and its `.manifest`;
+- `blueberry-pie-os-arm64-VERSION-zfs.img.xz` and its `.manifest`;
 - `SHA256SUMS`.
 
-Write an image to an SD card with any image writer.
+Write an image to an SD card of 4 GB or more with any image writer. Each
+image is 3,774,873,600 bytes.
 
 ## A fallback for panics and failed boots
 

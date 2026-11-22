@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright (c) 2026 The Blueberry Pie OS Authors
 # Usage: backup.sh root@HOST KNOWN_HOSTS OUTPUT
-# Copies the boot partition's files, the first MB of its disk, /etc and the
-# dpkg state. A long raw read of the boot partition stalled a QEMU guest, so
-# there is no raw image: the files, their sums and the MBR restore it.
+# Copies the boot partition's files, the first 16 MiB of its disk, /etc and
+# the dpkg state. A long raw read of the boot partition stalled a QEMU
+# guest, so there is no raw image: the files, their sums and the MBR
+# restore it.
 [[ $# == 3 ]] || { sed -n '4p' "$0" >&2; exit 2; }
 HOST=$1 KNOWN=$2 OUT=$3
 source "$(dirname -- "$0")/lib.sh"
@@ -23,7 +24,7 @@ rrun 'set -eu
 fat_mount rdonly
 trap fat_umount EXIT
 fat_sums' > "$OUT/fat-sums.txt" < /dev/null
-rsh "dd if=/dev/r${DISK#/dev/} bs=512 count=2048 2>/dev/null" < /dev/null > "$OUT/disk-head.bin"
+rsh "dd if=/dev/r${DISK#/dev/} bs=1048576 count=16 2>/dev/null" < /dev/null > "$OUT/disk-head.bin"
 rsh 'tar -C / -cf - private/etc 2>/dev/null' < /dev/null > "$OUT/etc.tar"
 rsh 'cat /var/lib/dpkg/status' < /dev/null > "$OUT/dpkg-status"
 rsh "dpkg-query -W -f='\${Package} \${Version}\n'" < /dev/null > "$OUT/packages.txt"
@@ -31,7 +32,7 @@ mkdir "$OUT/fat"
 tar -C "$OUT/fat" --exclude='._*' --warning=no-unknown-keyword -xf "$OUT/fat.tar"
 (cd "$OUT/fat" && find . -type f -exec sha256sum {} + | sort -k 2) > "$OUT/fat-sums-local.txt"
 diff -u "$OUT/fat-sums.txt" "$OUT/fat-sums-local.txt" > "$OUT/fat-sums.diff" || { say "FAIL: the FAT copy differs from the Pi's sums"; exit 1; }
-[[ $(stat -c %s "$OUT/disk-head.bin") == 1048576 ]] || { say "FAIL: short disk head"; exit 1; }
+[[ $(stat -c %s "$OUT/disk-head.bin") == 16777216 ]] || { say "FAIL: short disk head"; exit 1; }
 python3 - "$OUT/disk-head.bin" > "$OUT/partitions.txt" <<'PY' || { say "FAIL: the disk head holds no MBR with a FAT first"; exit 1; }
 import struct, sys
 mbr = open(sys.argv[1], 'rb').read(512)

@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright (c) 2026 The Blueberry Pie OS Authors
 #
-# Build the Blueberry Pie OS SD card images for the Raspberry Pi 4 and 5
-# from the packages of an apt repository: one with an HFS+ root, one with
-# a ZFS root.
+# Build the Blueberry Pie OS SD card images from the packages of an apt
+# repository: one with an HFS+ root, for the Raspberry Pi 4 and 5 only,
+# and one with a ZFS root, for every board PIE runs on.
 #
 #   ./build.sh [-r REPO_URL] [-k KEYRING] [-p PACKAGES] [-z PACKAGES] [-x DIR] [-o OUTDIR] VERSION
 #
@@ -14,7 +14,7 @@
 # the ZFS image's further packages; it defaults to packages-zfs. -x names a
 # directory of .deb files that take the place of the repository's packages
 # of the same names, or add to them. OUTDIR defaults to out. It gets
-# blueberry-pie-os-rpi-VERSION-hfs.img.xz and -zfs.img.xz, a .manifest for
+# blueberry-pie-os-arm64-VERSION-hfs.img.xz and -zfs.img.xz, a .manifest for
 # each, which lists the packages installed, and SHA256SUMS.
 # The user pie, uid 501, is in admin, staff and wheel. Its record is in
 # OpenDirectory, in /var/db/dslocal, with the password blueberry. sshd
@@ -46,7 +46,7 @@ done
 shift $(( OPTIND - 1 ))
 [ $# = 1 ] || { sed -n 5,24p "$0"; exit 2; }
 VERSION="$1"
-NAME="blueberry-pie-os-rpi-$VERSION"
+NAME="blueberry-pie-os-arm64-$VERSION"
 if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
 	SOURCE_DATE_EPOCH="$(git -C "$HERE" log -1 --format=%ct)" ||
 		{ echo "build.sh: no git history; set SOURCE_DATE_EPOCH" >&2; exit 1; }
@@ -154,7 +154,7 @@ fetch zfs "$PACKAGES" "$PACKAGES_ZFS"
 fr "$HERE/tools/installroot.sh" "$W/root" "$W"/debs-hfs/*.deb
 add_pie "$W/root"
 check_boot "$W/root"
-fr python3 "$HERE/tools/mkhfs.py" -n "Blueberry Pie OS" -s 1790 -J --seed "$NAME" \
+fr python3 "$HERE/tools/mkhfs.py" -n "Blueberry Pie OS" -s 3072 -J --seed "$NAME" \
 	-u "$W/root.uuid" "$W/root" "$W/root.hfs"
 check_hfs "$W/root" "$W/root.hfs" "$W"/debs-hfs/*.deb
 "$HERE/tools/mkimage.sh" -o "$W/$NAME-hfs.img" -B "$W/root/usr/lib/blueberry-pie-os/boot" \

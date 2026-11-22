@@ -10,8 +10,8 @@ Run the QEMU test with a built image and its manifest, `-hfs` or `-zfs`:
 
 ```sh
 IMAGE_SHA256=EXPECTED_SHA256 tests/qemu-boot.sh \
-  out/blueberry-pie-os-rpi-VERSION-hfs.img.xz \
-  out/blueberry-pie-os-rpi-VERSION-hfs.manifest \
+  out/blueberry-pie-os-arm64-VERSION-hfs.img.xz \
+  out/blueberry-pie-os-arm64-VERSION-hfs.manifest \
   /path/to/qemu-system-aarch64 22222 evidence/qemu
 ```
 
@@ -37,7 +37,10 @@ reading the guest key back for independent signature verification.
 
 An uncompressed image works too. IMAGE_SHA256 is optional. When set, it
 must match the input file before decompression. The test modifies only
-its own SD copy. It reads the first FAT partition through mtools. It
+its own SD copy, which it pads to the next power of two, so that the
+-zfs image's first boot grows its pool as on a larger card. QEMU's SD
+card also needs a power of two up to 2 GiB. It reads the first FAT
+partition through mtools. It
 extracts pieboot.bin, bcm2711-rpi-4-b.dtb, xnu.bundle and cmdline.txt.
 It records their hashes and the exact QEMU command.
 
@@ -150,7 +153,7 @@ PIE_PASSWORD defaults to blueberry.
 PI_LEASE=YOUR_LEASE \
 PI_CONSOLE_LOG=/path/to/live-console.log \
   tests/pi-test.sh pie@pi-host /path/to/known_hosts \
-  out/blueberry-pie-os-rpi-VERSION-hfs.manifest evidence/pi
+  out/blueberry-pie-os-arm64-VERSION-hfs.manifest evidence/pi
 ```
 
 SSH uses StrictHostKeyChecking=yes and the supplied
