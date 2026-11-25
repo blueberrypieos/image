@@ -146,9 +146,9 @@ tests/pi/backup.sh root@PI known_hosts out/backup
 ```
 
 `inventory.sh` changes nothing. `backup.sh` copies the boot partition's
-files and their sums, the first 16 MiB of the disk, `/etc` and the
-dpkg state. Keep the backup off the Pi. `trial.sh` checks the boot
-partition against it before every change.
+files and their sums, the first 16 MiB and the last 1 MiB of the disk,
+`/etc` and the dpkg state. Keep the backup off the Pi. `trial.sh` checks
+the boot partition against it before every change.
 
 ### 2. Prove the way back on each new board
 

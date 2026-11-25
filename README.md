@@ -8,10 +8,14 @@ only. Boards added later boot the `-zfs` image.
 
 ## The images
 
-- MBR disk images of 3600 MiB, compressed with xz.
+- MBR disk images of 3601 MiB, compressed with xz.
 - The first 16 MiB hold the MBR, then zeros up to partition 1. They
   leave room for the loader of a board whose boot ROM reads it from
-  sector 64, such as the RK3566. `tools/mkimage.sh -l` writes it there.
+  sector 64, such as the RK3566. `tools/mkimage.sh -l` writes it there,
+  and a GPT for the loader on the RG353V's eMMC: one partition, uboot,
+  at sectors 16384 to 24575, where the loader's FIT starts. Its backup
+  is in the image's last 33 sectors. The MBR has no 0xEE entry, so PIE,
+  U-Boot and Linux read only the MBR.
 - Partition 1: FAT32, 512 MiB, labelled `PIEBOOT`, from sector 32768. It
   holds the firmware, pieboot, `config.txt`, the kernel bundle and
   `cmdline.txt`.
@@ -20,6 +24,9 @@ only. Boards added later boot the `-zfs` image.
   not grow.
 - Partition 2 of `-zfs`: the ZFS pool `pie`, of 3 GiB. The ZFS image needs
   2 GB of memory or more.
+- The last 1 MiB: no partition covers it. The `-zfs` image's first boot
+  grows the pool up to the card's last MiB, and moves the GPT's backup
+  there.
 - The user `pie` is in `admin`, so it may use `sudo`. Its password is
   `blueberry`, and sshd accepts it from the first boot. Change it with
   `passwd` after the first login.
@@ -114,8 +121,8 @@ the same checks on an HFS+ volume made for that, before pie-makefs writes
 the pool. zdb then checks the pool.
 
 `tests/mkimage.sh` tests the disk layout that `tools/mkimage.sh` writes:
-where the partitions start, the zeros before partition 1, and a loader
-written with `-l`.
+where the partitions start, the zeros before partition 1, the last 1 MiB,
+and a loader written with `-l`, with both copies of its GPT.
 
 The repository's InRelease must be signed by a key in
 `keys/blueberry-pie-os-archive-keyring.gpg`.
@@ -129,7 +136,7 @@ A tag builds the images, attests them and releases:
 - `SHA256SUMS`.
 
 Write an image to an SD card of 4 GB or more with any image writer. Each
-image is 3,774,873,600 bytes.
+image is 3,775,922,176 bytes.
 
 ## A fallback for panics and failed boots
 
