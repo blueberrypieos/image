@@ -18,7 +18,9 @@ only. Boards added later boot the `-zfs` image.
   U-Boot and Linux read only the MBR.
 - Partition 1: FAT32, 512 MiB, labelled `PIEBOOT`, from sector 32768. It
   holds the firmware, pieboot, `config.txt`, the kernel bundle and
-  `cmdline.txt`.
+  `cmdline.txt`. Its `pie-installed.txt` lists the copied files that
+  `blueberry-pie-os-update-boot` can record. update-boot can then remove a
+  listed file once it leaves the boot directory.
 - Partition 2 of `-hfs`: HFS+, case-sensitive and journaled, named
   "Blueberry Pie OS", of 3 GiB. It holds the root file system and does
   not grow.
@@ -122,7 +124,8 @@ the pool. zdb then checks the pool.
 
 `tests/mkimage.sh` tests the disk layout that `tools/mkimage.sh` writes:
 where the partitions start, the zeros before partition 1, the last 1 MiB,
-and a loader written with `-l`, with both copies of its GPT.
+and a loader written with `-l`, with both copies of its GPT. It also
+checks the boot partition's `pie-installed.txt`.
 
 The repository's InRelease must be signed by a key in
 `keys/blueberry-pie-os-archive-keyring.gpg`.

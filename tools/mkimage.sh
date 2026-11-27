@@ -23,7 +23,12 @@
 # sectors 1 to 33, and its backup in the image's last 33 sectors. The MBR
 # has no 0xEE entry, so PIE, U-Boot and Linux read only the MBR.
 # The boot partition's files go in sorted by name. With SOURCE_DATE_EPOCH
-# set, they carry that date.
+# set, they carry that date. The boot partition's pie-installed.txt lists
+# the files copied from BOOTDIR, in the form blueberry-pie-os-update-boot
+# reads. update-boot can then remove a file once its package goes. The
+# list leaves out cmdline.txt, usercfg.txt, xnu.bundle.old and the names
+# update-boot cannot list. BOOTDIR must hold no symbolic links, and
+# neither pie-installed.txt nor pie-installed.new.
 # Needs dosfstools, mtools, sfdisk from fdisk, and python3 for -l.
 set -euo pipefail
 
@@ -62,8 +67,34 @@ fi
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp -RL "$BOOT"/. "$STAGE"/
+cp -R "$BOOT"/. "$STAGE"/
+LINK="$(cd "$STAGE" && find . -type l -print -quit)" || { echo "mkimage.sh: cannot list $BOOT" >&2; exit 1; }
+if [ -n "$LINK" ]; then
+	echo "mkimage.sh: $BOOT holds a link, $LINK" >&2
+	exit 1
+fi
 printf '%s\n' "$ARGS" > "$STAGE/cmdline.txt"
+if [ -n "$(find "$STAGE" -maxdepth 1 \( -iname pie-installed.txt -o -iname pie-installed.new \))" ]; then
+	echo "mkimage.sh: $BOOT holds pie-installed.txt or pie-installed.new" >&2
+	exit 1
+fi
+RECORD="$(
+	export LC_ALL=C
+	declare -A seen
+	(cd "$STAGE" && find . -type f -print0) | sort -z | while IFS= read -r -d '' p; do
+		p="${p#./}"
+		l="${p,,}"
+		[[ /$p/ =~ ^(/[A-Za-z0-9]([A-Za-z0-9._+-]*[A-Za-z0-9_+-])?)+/$ ]] || continue
+		case "$l" in
+		cmdline.txt|usercfg.txt|xnu.bundle.old) continue ;;
+		esac
+		[ -z "${seen[$l]:-}" ] || continue
+		seen[$l]=1
+		h="$(sha256sum < "$STAGE/$p")" || exit 1
+		printf '%s  %s\n' "${h%% *}" "$p"
+	done | sort -k 2
+)"
+if [ -n "$RECORD" ]; then printf '%s\n' "$RECORD"; fi > "$STAGE/pie-installed.txt"
 chmod -R u+rwX,go+rX,go-w "$STAGE"
 if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
 	find "$STAGE" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +

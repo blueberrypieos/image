@@ -190,4 +190,38 @@ expect 0 root-mib-gpt-tail '^after the last partition: 2048 sectors$' py layout 
 expect 0 root-mib-gpt-backup '^gpt: backup valid, at the last sector$' py gpt "$W/h.img"
 expect 0 root-mib-gpt-data '^root: same$' py root "$W/h.img" "$W/root-mib.img"
 expect 1 usage '^# Needs dosfstools' "$TOOLS/mkimage.sh" -o "$W/g.img"
+
+record() { mtype -i "$1@@16777216" ::/pie-installed.txt | cmp - "$2" && echo same; }
+want() { (cd "$1" && for f in "${@:2}"; do printf '%s  %s\n' "$(sha256sum < "$f" | cut -c1-64)" "$f"; done) > "$W/want"; }
+want "$W/boot" overlays/a.dtbo pieboot.bin
+expect 0 record-plain '^same$' record "$W/a.img" "$W/want"
+mkdir -p "$W/boot2/overlays" "$W/boot2/rockchip" "$W/boot2/trial"
+for f in pieboot.bin xnu.bundle xnu.bundle.old config.txt usercfg.txt overlays/a.dtbo rockchip/A.dtb MANIFEST Promote.TXT trial/x.dtb "bad name.txt" .hidden notes.txt.; do
+    echo "$f" > "$W/boot2/$f"
+done
+expect 0 record-build '^image: ' "$TOOLS/mkimage.sh" -B "$W/boot2" -r "$W/root-mib.img" -t bf -a zfs_boot=pie -o "$W/i.img"
+want "$W/boot2" MANIFEST Promote.TXT config.txt overlays/a.dtbo pieboot.bin rockchip/A.dtb trial/x.dtb xnu.bundle
+expect 0 record-names '^same$' record "$W/i.img" "$W/want"
+expect 0 record-cmdline '^zfs_boot=pie$' mtype -i "$W/i.img@@16777216" ::/cmdline.txt
+expect 0 record-kept '^usercfg.txt$' mtype -i "$W/i.img@@16777216" ::/usercfg.txt
+mkdir -p "$W/boot4/sub" "$W/boot6/real"
+echo pieboot > "$W/boot4/pieboot.bin"
+ln -s .. "$W/boot4/sub/up"
+expect 1 link-dir-fails 'holds a link, ./sub/up$' "$TOOLS/mkimage.sh" -B "$W/boot4" -r "$W/root-mib.img" -t bf -a zfs_boot=pie -o "$W/k.img"
+expect 1 link-dir-no-image 'No such file' ls "$W/k.img"
+echo pieboot > "$W/boot6/pieboot.bin"
+echo dtbo > "$W/boot6/real/a.dtbo"
+ln -s real/a.dtbo "$W/boot6/flink.dtbo"
+expect 1 link-file-fails 'holds a link, ./flink.dtbo$' "$TOOLS/mkimage.sh" -B "$W/boot6" -r "$W/root-mib.img" -t bf -a zfs_boot=pie -o "$W/k.img"
+mkdir -p "$W/boot5"
+echo pieboot > "$W/boot5/pieboot.bin"
+echo x > "$W/boot5/unreadable"
+chmod 000 "$W/boot5/unreadable"
+expect 1 unreadable-fails 'unreadable' "$TOOLS/mkimage.sh" -B "$W/boot5" -r "$W/root-mib.img" -t bf -a zfs_boot=pie -o "$W/l.img"
+chmod 644 "$W/boot5/unreadable"
+for n in pie-installed.txt PIE-Installed.NEW; do
+    mkdir -p "$W/boot3-$n"
+    echo x > "$W/boot3-$n/$n"
+    expect 1 "record-refuses-$n" 'holds pie-installed.txt or pie-installed.new$' "$TOOLS/mkimage.sh" -B "$W/boot3-$n" -r "$W/root-mib.img" -t bf -a zfs_boot=pie -o "$W/j.img"
+done
 exit "$FAILED"
