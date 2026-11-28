@@ -1,3 +1,9 @@
 rpi-firmware
 openssh
 sudo
+zfs
+pie-zfsroot
+u-boot-rk3566
+rk3566-firmware
+piewifi
+piewifi-rtw88

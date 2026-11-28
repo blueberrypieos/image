@@ -69,8 +69,8 @@ Both tests check these results:
 - The guest archive key and an independent Release signature check.
 
 The apt check uses a temporary guest lists and cache directory. It uses
-a temporary source and the selected archive key. It does not install
-or upgrade packages. Its output includes authentication debugging and source files.
+a temporary source and the selected archive key. It installs and
+upgrades no packages. Its output includes authentication debugging and source files.
 The guest must provide readable logs and a sha256sum command. A denied
 log read fails the check. A missing system.log fails the check.
 Archive helpers are shared by both entry points. kernel.py extracts the
@@ -78,6 +78,37 @@ bundle members and reads their Mach-O UUID and embedded version.
 The QEMU console must identify the selected member and matching version.
 A panic report's UUID must match that member too. The runtime check
 compares sysctl and uname output with that identity.
+
+The QEMU test also checks the loader area of the card:
+
+- With u-boot-rk3566 in the manifest, pie-update-loader as root says
+  the board is not one its loader is for, writes nothing and exits 0.
+- After the boots, sectors 34 to 32767 of the SD copy are as the image
+  had them. When the `-zfs` image's first boot grows the pool, it
+  rewrites the partition tables in sectors 0 to 33.
+- After the boots, the MBR is as the image had it. On a ZFS root only
+  partition 2 may grow, up to 2048 sectors before the end. An image with
+  a GPT still has both GPT headers valid for the SD copy's size, with
+  the image's entries. An image without one still has zeros in sectors
+  1 to 33.
+
+With piewifi in the manifest, it also checks that root runs pie-wifi watch
+and that pie-wifi list works as root. QEMU has no WiFi chip, so no WiFi
+driver loads.
+
+The root's kind comes from the type of partition 2 in the image. With
+pie-zfsroot in the manifest, the test checks that the guest finds the
+same kind, and dpkg's and apt's settings for it. On a ZFS root,
+`/etc/dpkg/dpkg.cfg.d/pie-zfs` and `/etc/apt/apt.conf.d/40pie-zfs` must
+equal the package's copies, and `/private/var/lib/dpkg` must be a link.
+On any other root, neither file and no `pie-data` may exist, and
+`/private/var/lib/dpkg` must be a directory.
+
+On every image, it builds a test package with files in `/private/var`,
+`/usr/local` and `/usr/share`. apt-get installs it as root and purges
+it. On a ZFS root, dpkg must leave out the two data-path files. On any
+other root, all three must be installed. After the purge none may be
+left, and dpkg --audit must be empty.
 
 A failed check makes the script exit nonzero. results.txt names each
 result. A blocked guest check gets a separate evidence file. The scripts

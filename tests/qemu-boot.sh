@@ -23,6 +23,12 @@ size=$(stat -c %s "$OUT/sd.img")
 card=1048576
 while ((card < size)); do card=$((card * 2)); done
 truncate -s "$card" "$OUT/sd.img"
+head -c $((32768 * 512)) "$OUT/sd.img" > "$OUT/first16m-before.bin"
+case $(od -An -tx1 -j 466 -N 1 "$OUT/sd.img" | tr -d ' ') in
+    bf) ROOT_ZFS=1 ;;
+    af) ROOT_ZFS=0 ;;
+    *) echo 'Partition 2 is neither HFS+ nor ZFS.' >&2; exit 2 ;;
+esac
 OFFSET=$(python3 - "$OUT/sd.img" <<'PY'
 import struct
 import sys
@@ -353,10 +359,126 @@ reboot_guest() {
     password_checks -after-reboot "$OUT/console-reboot.log"
     ann_checks -after-reboot
 }
+loader_skips() {
+    local out
+    out=$(privileged /usr/sbin/pie-update-loader 2>&1) || { printf '%s\n' "$out"; return 1; }
+    printf '%s\n' "$out"
+    grep -q ' is not a board this loader is for; nothing written$' <<< "$out"
+}
+wifi_idle() {
+    local out
+    out=$(privileged "pgrep -U 0 -xf 'pie-wifi watch' && pie-wifi list && echo listed" 2>&1) || { printf '%s\n' "$out"; return 1; }
+    printf '%s\n' "$out"
+    grep -qx listed <<< "$out"
+}
+zfs_settings() {
+    privileged_input "sh -s -- $ROOT_ZFS" <<'SH'
+set -u
+d=/etc/dpkg/dpkg.cfg.d a=/etc/apt/apt.conf.d c=/usr/lib/blueberry-pie-os/zfs
+if mount | awk '$2 == "on" && $3 == "/" && $4 == "(zfs," { f = 1 } END { exit !f }'; then zfs=1; else zfs=0; fi
+[ "$zfs" = "$1" ] || { echo "The guest's root is not the image's kind."; exit 1; }
+if [ "$zfs" = 1 ]; then
+    echo 'The root is a ZFS dataset.'
+    cmp "$c/dpkg.cfg" "$d/pie-zfs" && cmp "$c/apt.conf" "$a/40pie-zfs" && test -L /private/var/lib/dpkg || exit 1
+else
+    echo 'The root is not a ZFS dataset.'
+    ls -ld /private/var/lib/dpkg
+    test -d /private/var/lib/dpkg && test ! -L /private/var/lib/dpkg || exit 1
+    for f in "$d/pie-zfs" "$d/pie-data" "$a/40pie-zfs"; do
+        if [ -e "$f" ]; then echo "$f exists."; exit 1; fi
+    done
+fi
+echo 'dpkg and apt have the settings for this root.'
+SH
+}
+data_paths() {
+    local d=$OUT/data-paths-deb p
+    rm -rf "$d"
+    mkdir -p "$d/DEBIAN"
+    printf '%s\n' 'Package: pie-image-test' 'Version: 1' 'Architecture: darwin-arm64' \
+        'Maintainer: Test <test@example.invalid>' 'Description: files on the data paths' > "$d/DEBIAN/control"
+    for p in private/var/db usr/local/share usr/share; do
+        mkdir -p "$d/$p/pie-image-test"
+        echo test > "$d/$p/pie-image-test/data"
+    done
+    (cd "$d" && find private usr -type f -exec md5sum {} + > DEBIAN/md5sums)
+    dpkg-deb -Zxz --root-owner-group -b "$d" "$OUT/pie-image-test.deb" || return 1
+    remote 'cat > /tmp/pie-image-test.deb' < "$OUT/pie-image-test.deb" || return 1
+    privileged_input "sh -s -- $ROOT_ZFS" <<'SH'
+set -u
+trap 'rm -f /tmp/pie-image-test.deb' EXIT
+data="/private/var/db/pie-image-test/data /usr/local/share/pie-image-test/data"
+zfs=$1
+apt-get install -y /tmp/pie-image-test.deb || exit 1
+test -f /usr/share/pie-image-test/data || exit 1
+for f in $data; do
+    if [ $zfs = 1 ] && [ -e "$f" ]; then echo "$f is installed on a ZFS root."; exit 1; fi
+    if [ $zfs = 0 ] && [ ! -f "$f" ]; then echo "$f is missing."; exit 1; fi
+    if [ $zfs = 1 ]; then echo "$f: left out"; else echo "$f: installed"; fi
+done
+apt-get purge -y pie-image-test || exit 1
+for f in $data /usr/share/pie-image-test/data; do
+    if [ -e "$f" ]; then echo "$f is left after the purge."; exit 1; fi
+done
+if dpkg-query -W pie-image-test 2>/dev/null; then echo 'pie-image-test is still known to dpkg.'; exit 1; fi
+out=$(dpkg --audit) && [ -z "$out" ] || { printf '%s\n' "$out"; exit 1; }
+echo 'apt and dpkg installed and purged pie-image-test.'
+SH
+}
+partition_tables() {
+    python3 - "$OUT/first16m-before.bin" "$OUT/sd.img" "$ROOT_ZFS" <<'PY'
+import os
+import struct
+import sys
+import zlib
+before = open(sys.argv[1], 'rb').read(34 * 512)
+n = os.path.getsize(sys.argv[2]) // 512
+with open(sys.argv[2], 'rb') as f:
+    head = f.read(34 * 512)
+    f.seek((n - 33) * 512)
+    tail = f.read(33 * 512)
+assert head[:462] == before[:462] and head[478:512] == before[478:512], 'the MBR changed'
+p2, b2 = head[462:478], before[462:478]
+if sys.argv[3] == '1':
+    start, size = struct.unpack_from('<II', p2, 8)
+    assert p2[:5] == b2[:5] and p2[8:12] == b2[8:12], 'partition 2 changed'
+    assert size >= struct.unpack_from('<I', b2, 12)[0] and start + size <= n - 2048, 'partition 2 has a wrong size'
+    print('Partition 2 ends %d sectors before the end of the card.' % (n - start - size))
+else:
+    assert p2 == b2, 'partition 2 changed'
+if before[512:520] != b'EFI PART':
+    assert head[512:].count(0) == 33 * 512, 'sectors 1 to 33 are not zero'
+    print('The image has no GPT, and sectors 1 to 33 are zero.')
+    sys.exit()
+def header(h, my, alt, at, ents):
+    hh = bytearray(h[:92])
+    hh[16:20] = bytes(4)
+    assert struct.unpack_from('<8sIII', h, 0) == (b'EFI PART', 0x10000, 92, zlib.crc32(hh)), 'header CRC'
+    assert h[20:24].count(0) == 4 and h[92:512].count(0) == 420, 'reserved bytes'
+    assert struct.unpack_from('<QQQQ', h, 24) == (my, alt, 34, n - 34), 'header LBAs'
+    assert struct.unpack_from('<QIII', h, 72) == (at, 128, 128, zlib.crc32(ents)), 'entries'
+    assert h[56:72] == before[512 + 56:512 + 72], 'disk GUID'
+ents = head[1024:]
+assert ents == before[1024:], 'the GPT entries changed'
+header(head[512:1024], 1, n - 1, 2, ents)
+assert tail[:-512] == ents, 'the backup entries differ'
+header(tail[-512:], n - 1, 1, n - 33, ents)
+print('Both GPT headers are valid for %d sectors, with the image\'s entries.' % n)
+PY
+}
+loader_area() {
+    cmp <(tail -c +$((34 * 512 + 1)) "$OUT/first16m-before.bin") \
+        <(head -c $((32768 * 512)) "$OUT/sd.img" | tail -c +$((34 * 512 + 1))) &&
+        echo 'Sectors 34 to 32767 are unchanged.'
+}
 wait_up "$OUT/console.log" ''
 if grep -aE '(^|[[:space:]])login:' "$OUT/console.log" > "$OUT/login.txt"; then record PASS login; else record FAIL login; fi
 if ((UP)); then
     collect
+    if grep -q '^u-boot-rk3566 ' "$MANIFEST"; then check loader-skips loader_skips; fi
+    if grep -q '^piewifi ' "$MANIFEST"; then check wifi-watch wifi_idle; fi
+    if grep -q '^pie-zfsroot ' "$MANIFEST"; then check zfs-settings zfs_settings; fi
+    check data-paths data_paths
     accounts
     reboot_guest || true
     if grep -aE '(^|[[:space:]])login:' "$OUT/console-reboot.log" > "$OUT/login-after-reboot.txt" 2>&1; then
@@ -370,6 +492,8 @@ fi
 stop
 trap - EXIT
 exec 3>&-
+check loader-area loader_area
+check partition-tables partition_tables
 if grep -aF 'panic(cpu' "$OUT"/console*.log > "$OUT/console-panics.txt"; then record FAIL console-panics; else record PASS console-panics; fi
 check console-kernel python3 "$HERE/kernel.py" "$OUT/fat/xnu.bundle" "$OUT/console-members" "$OUT/console.log"
 printf 'exit=%s\n' "$FAILED" | tee "$OUT/exit.txt"

@@ -224,4 +224,60 @@ for n in pie-installed.txt PIE-Installed.NEW; do
     echo x > "$W/boot3-$n/$n"
     expect 1 "record-refuses-$n" 'holds pie-installed.txt or pie-installed.new$' "$TOOLS/mkimage.sh" -B "$W/boot3-$n" -r "$W/root-mib.img" -t bf -a zfs_boot=pie -o "$W/j.img"
 done
+mkdir -p "$W/rk/rockchip"
+for f in pieboot.bin config.txt xnu.bundle boot.scr rockchip/rk3566-anbernic-rg353v.dtb rockchip/rk3566-anbernic-rg353v-panels.dtbo; do
+    echo "$f" > "$W/rk/$f"
+done
+ff() { head -c "$1" /dev/zero | tr '\0' '\377'; }
+rk() {
+    printf RKNS; head -c $(( (7168 - 64) * 512 - 4 )) /dev/urandom; ff $(( 512 * 512 ))
+    head -c $(( (16384 - 7680) * 512 )) /dev/urandom; printf '\320\015\376\355'
+    head -c $(( ($1 - 16384) * 512 - 4 )) /dev/urandom
+}
+rk 20344 > "$W/rk.bin"
+for o in $(( (7168 - 64) * 512 - 1 )) $(( (7680 - 64) * 512 )); do
+    printf '\0' | dd of="$W/rk.bin" bs=1 seek="$o" conv=notrunc status=none
+done
+CHECK=$TOOLS/checkloader.py
+expect 0 rk-check '^checkloader: .*: an RK3566 loader for sector 64, 10383360 bytes$' python3 -I "$CHECK" "$W/rk.bin"
+rk 24576 > "$W/rk-max.bin"
+expect 0 rk-check-max 'an RK3566 loader for sector 64' python3 -I "$CHECK" "$W/rk-max.bin"
+rk 24577 > "$W/rk-long.bin"
+expect 1 rk-check-long 'does not end before sector 24576$' python3 -I "$CHECK" "$W/rk-long.bin"
+{ printf XKNS; tail -c +5 "$W/rk.bin"; } > "$W/rk-magic.bin"
+expect 1 rk-check-magic 'does not start with the Rockchip boot header, RKNS$' python3 -I "$CHECK" "$W/rk-magic.bin"
+{ cat "$W/rk.bin"; printf x; } > "$W/rk-odd.bin"
+expect 1 rk-check-odd 'is 10383361 bytes, not a whole number of sectors$' python3 -I "$CHECK" "$W/rk-odd.bin"
+for at in first:$(( (7168 - 64) * 512 )) last:$(( (7680 - 64) * 512 - 1 )); do
+    cp "$W/rk.bin" "$W/rk-vendor.bin"
+    printf x | dd of="$W/rk-vendor.bin" bs=1 seek="${at#*:}" conv=notrunc status=none
+    expect 1 "rk-check-vendor-${at%%:*}" 'does not hold 0xff in sectors 7168 to 7679' python3 -I "$CHECK" "$W/rk-vendor.bin"
+done
+cp "$W/rk.bin" "$W/rk-fit.bin"
+printf '\0' | dd of="$W/rk-fit.bin" bs=1 seek=$(( (16384 - 64) * 512 )) conv=notrunc status=none
+expect 1 rk-check-fit 'has no FIT at sector 16384$' python3 -I "$CHECK" "$W/rk-fit.bin"
+head -c $(( (7680 - 64) * 512 )) "$W/rk.bin" > "$W/rk-short.bin"
+expect 1 rk-check-short 'has no FIT at sector 16384$' python3 -I "$CHECK" "$W/rk-short.bin"
+head -c $(( (7400 - 64) * 512 )) "$W/rk.bin" > "$W/rk-shorter.bin"
+expect 1 rk-check-vendor-short 'ends before sector 7680$' python3 -I "$CHECK" "$W/rk-shorter.bin"
+expect 1 rk-check-missing '^checkloader: .*/none.bin: No such file or directory$' python3 -I "$CHECK" "$W/none.bin"
+mkfifo "$W/rk.fifo"
+expect 1 rk-check-fifo '^checkloader: .*/rk.fifo: not a regular file$' timeout 10 python3 -I "$CHECK" "$W/rk.fifo"
+expect 1 rk-check-dir '^checkloader: .*: not a regular file$' python3 -I "$CHECK" "$W/rk"
+expect 0 rk-build '^image: ' "$TOOLS/mkimage.sh" -B "$W/rk" -r "$W/root-mib.img" -t bf -a zfs_boot=pie -o "$W/m.img" -l "$W/rk.bin"
+expect 0 rk-loader '^loader: in place$' py layout "$W/m.img" "$W/rk.bin"
+expect 0 rk-gap '^gap: zero$' py layout "$W/m.img" "$W/rk.bin"
+expect 0 rk-gpt '^gpt: backup valid, at the last sector$' py gpt "$W/m.img"
+expect 0 rk-boot-scr '^boot.scr$' mtype -i "$W/m.img@@16777216" ::/boot.scr
+expect 0 rk-dtb '^rockchip/rk3566-anbernic-rg353v.dtb$' mtype -i "$W/m.img@@16777216" ::/rockchip/rk3566-anbernic-rg353v.dtb
+expect 0 rk-pi-config '^config.txt$' mtype -i "$W/m.img@@16777216" ::/config.txt
+want "$W/rk" boot.scr config.txt pieboot.bin rockchip/rk3566-anbernic-rg353v-panels.dtbo rockchip/rk3566-anbernic-rg353v.dtb xnu.bundle
+expect 0 rk-record '^same$' record "$W/m.img" "$W/want"
+expect 0 rk-hfs-build '^image: ' "$TOOLS/mkimage.sh" -B "$W/rk" -r "$W/root-mib.img" -a rd=uuid -o "$W/n.img"
+expect 0 rk-hfs-entry '^partition 2: type 0xaf, flag 0x00, sectors 1081344 to 1085439$' py layout "$W/n.img"
+expect 0 rk-hfs-gap '^gap: zero$' py layout "$W/n.img"
+expect 0 rk-hfs-head '^head: zero$' py layout "$W/n.img"
+expect 0 rk-hfs-no-gpt '^gpt: none$' py gpt "$W/n.img"
+expect 0 rk-hfs-boot-scr '^boot.scr$' mtype -i "$W/n.img@@16777216" ::/boot.scr
+expect 0 rk-hfs-record '^same$' record "$W/n.img" "$W/want"
 exit "$FAILED"

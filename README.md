@@ -2,25 +2,37 @@
 
 The Blueberry Pie OS SD card images, built from the packages in the apt
 repository at https://blueberrypieos.com/apt/. There are two, with the
-same base packages: one with an HFS+ root, one with a ZFS root. Both
-boot the Raspberry Pi 4 and 5. The `-hfs` image is for the Raspberry Pi
-only. Boards added later boot the `-zfs` image.
+same packages: one with an HFS+ root, one with a ZFS root. Both boot the
+Raspberry Pi 4 and 5. The `-zfs` image also boots the Anbernic
+RG353V from its first card slot, TF1. The `-hfs` image is for the
+Raspberry Pi only. Boards added later boot the `-zfs` image.
 
 ## The images
 
 - MBR disk images of 3601 MiB, compressed with xz.
-- The first 16 MiB hold the MBR, then zeros up to partition 1. They
-  leave room for the loader of a board whose boot ROM reads it from
-  sector 64, such as the RK3566. `tools/mkimage.sh -l` writes it there,
-  and a GPT for the loader on the RG353V's eMMC: one partition, uboot,
-  at sectors 16384 to 24575, where the loader's FIT starts. Its backup
-  is in the image's last 33 sectors. The MBR has no 0xEE entry, so PIE,
-  U-Boot and Linux read only the MBR.
+- The first 16 MiB hold the MBR, then room up to partition 1 for the
+  loader of a board whose boot ROM reads it from sector 64, such as the
+  RK3566. In the `-hfs` image they are zeros after the MBR.
+  `tools/mkimage.sh -l` writes the loader there, and a GPT for the
+  loader on the RG353V's eMMC: one partition, uboot, at sectors 16384 to
+  24575, where the loader's FIT starts. Its backup is in the image's
+  last 33 sectors. The MBR has no 0xEE entry, so PIE, U-Boot and Linux
+  read only the MBR.
+- The `-zfs` image holds that loader and GPT. The loader is
+  u-boot-rk3566's `u-boot-rockchip.bin`: U-Boot for the RK3566, with
+  BL31 and the DDR init firmware. That firmware is Rockchip's, and
+  non-free. The Raspberry Pi firmware reads the MBR and the FAT. Don't
+  let a partitioning tool rewrite the GPT of a `-zfs` card. gdisk asks
+  whether to use the MBR or the GPT. If you choose the GPT and write,
+  it replaces the MBR, and the FAT and the root are lost.
 - Partition 1: FAT32, 512 MiB, labelled `PIEBOOT`, from sector 32768. It
   holds the firmware, pieboot, `config.txt`, the kernel bundle and
-  `cmdline.txt`. Its `pie-installed.txt` lists the copied files that
-  `blueberry-pie-os-update-boot` can record. update-boot can then remove a
-  listed file once it leaves the boot directory.
+  `cmdline.txt`. It also holds U-Boot's `boot.scr`, and in `rockchip/`
+  the RG353V's device tree and its panel overlay,
+  `rk3566-anbernic-rg353v-panels.dtbo`. Its `pie-installed.txt`
+  lists the copied files that `blueberry-pie-os-update-boot` can record.
+  update-boot can then remove a listed file once it leaves the boot
+  directory.
 - Partition 2 of `-hfs`: HFS+, case-sensitive and journaled, named
   "Blueberry Pie OS", of 3 GiB. It holds the root file system and does
   not grow.
@@ -86,20 +98,33 @@ To log kernel messages to `/var/log/system.log`, add
 
 The root has every package that is Essential or has Priority required,
 important or standard. It also has the packages that `packages` names, one
-per line, such as `rpi-firmware`, which has Priority optional. The ZFS
-image also has the packages that `packages-zfs` names. Each comes with the
-packages it depends on, at its newest version. The `.manifest` next to
-each image lists them.
+per line. Both images get the same packages:
+
+- `rpi-firmware`, `openssh` and `sudo`.
+- `zfs` and `pie-zfsroot`. On an HFS+ root, dpkg keeps its usual
+  settings, and apt's hooks do nothing. The build fails if dpkg's
+  settings change. `softreboot` restarts user space. The other ZFS tools
+  say that the root is not a ZFS dataset.
+- `u-boot-rk3566` and `rk3566-firmware`, for the RG353V. On a Raspberry
+  Pi, `pie-update-loader` writes nothing.
+- The WiFi. `piewifi` has `pie-wifi`, the 802.11 stack and the Raspberry
+  Pi 4 and 500 driver, with `pie-firmware-brcm`. `piewifi-rtw88` has the
+  RG353V's driver, with `pie-firmware-rtw88`.
+
+The build fails if they install no loader, `boot.scr` or RG353V device
+tree, or if `tools/checkloader.py` finds the loader's layout wrong. Each
+package comes with the packages it depends on, at its newest version.
+The `.manifest` next to each image lists them. The two are the same.
 
 ## Building
 
 ```
-./build.sh [-r REPO_URL] [-k KEYRING] [-p PACKAGES] [-z PACKAGES] [-x DIR] [-o OUTDIR] VERSION
+./build.sh [-r REPO_URL] [-k KEYRING] [-p PACKAGES] [-x DIR] [-o OUTDIR] VERSION
 ```
 
-`-p` takes another list of packages in place of `packages`, and `-z` in
-place of `packages-zfs`. `-x` names a directory of .deb files, which take
-the place of the repository's packages of the same names or add to them.
+`-p` takes another list of packages in place of `packages`, for both
+images. `-x` names a directory of .deb files, which take the place of the
+repository's packages of the same names or add to them.
 
 It needs dpkg, fakeroot, mtools, dosfstools, fdisk, hfsprogs, xz-utils,
 python3, git, sqv or gpgv, pie-makefs 2 or later and zdb from
@@ -125,7 +150,9 @@ the pool. zdb then checks the pool.
 `tests/mkimage.sh` tests the disk layout that `tools/mkimage.sh` writes:
 where the partitions start, the zeros before partition 1, the last 1 MiB,
 and a loader written with `-l`, with both copies of its GPT. It also
-checks the boot partition's `pie-installed.txt`.
+checks the boot partition's `pie-installed.txt`, a boot directory with
+the RG353V's files beside the Raspberry Pi's, and each loader that
+`tools/checkloader.py` refuses.
 
 The repository's InRelease must be signed by a key in
 `keys/blueberry-pie-os-archive-keyring.gpg`.
@@ -140,6 +167,16 @@ A tag builds the images, attests them and releases:
 
 Write an image to an SD card of 4 GB or more with any image writer. Each
 image is 3,775,922,176 bytes.
+
+On the RG353V, put the card with the `-zfs` image in TF1. The loader on
+the eMMC finds U-Boot on the card through the GPT. An RG353V with no
+loader on its eMMC reads the card's loader from sector 64. U-Boot runs
+`boot.scr`, which starts pieboot with the line in `cmdline.txt`.
+
+WiFi can be set up before the first boot. Put a `wifi.txt` on the
+`PIEBOOT` partition with an `ssid=` line, and for a WPA2 network a
+`passphrase=` line after it. At boot, rc stores the networks with
+`pie-wifi import` and deletes the file. See pie-wifi(8).
 
 ## A fallback for panics and failed boots
 
